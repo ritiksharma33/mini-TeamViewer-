@@ -30,7 +30,7 @@ export function BrowserCanvas({ send, isLive, onFrame, style }) {
   // ── Draw incoming frames ─────────────────────────────────────────────────
 
   // Exposed as a ref so the parent can call it without re-rendering this component
-  const drawFrame = useCallback((base64Jpeg) => {
+const drawFrame = useCallback((frameData) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d', { alpha: false });
@@ -40,7 +40,11 @@ export function BrowserCanvas({ send, isLive, onFrame, style }) {
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       if (onFrame) onFrame();
     };
-    img.src = 'data:image/jpeg;base64,' + base64Jpeg;
+    
+    // ⚡️ FIX: Check if source is an object URL blob or fallback to base64 encoding scheme
+    img.src = typeof frameData === 'string' && frameData.startsWith('blob:')
+      ? frameData
+      : 'data:image/jpeg;base64,' + frameData;
   }, [onFrame]);
 
   // Expose drawFrame to parent via a ref callback on the canvas element

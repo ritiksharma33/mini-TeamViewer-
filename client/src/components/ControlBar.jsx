@@ -3,11 +3,12 @@
  *
  * The browser toolbar — sits between the status bar and the canvas.
  * Contains:
- *   - Start / Stop button
- *   - URL bar (imported)
- *   - Quality slider
- *   - Screenshot button
- *   - Sidebar toggle
+ * - Start / Stop button
+ * - Back / Forward navigation
+ * - URL bar (imported)
+ * - Quality slider
+ * - Screenshot button
+ * - Sidebar toggle
  */
 
 import { useState, useCallback } from 'react';
@@ -73,6 +74,8 @@ export function ControlBar({
   onNavigate,
   onScreenshot,
   onQualityChange,
+  onGoBack,       // 👈 Added prop
+  onGoForward,    // 👈 Added prop
   quality,
   sidebarOpen,
   onToggleSidebar,
@@ -134,6 +137,28 @@ export function ControlBar({
 
       {/* Separator */}
       <div style={{ width: '1px', height: '20px', background: 'var(--border)', flexShrink: 0 }} />
+
+      {/* 🚀 Back Button */}
+      <IconButton
+        title="Go Back"
+        onClick={onGoBack}
+        disabled={!isLive}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M15 18l-6-6 6-6"/>
+        </svg>
+      </IconButton>
+
+      {/* 🚀 Forward Button */}
+      <IconButton
+        title="Go Forward"
+        onClick={onGoForward}
+        disabled={!isLive}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M9 18l6-6-6-6"/>
+        </svg>
+      </IconButton>
 
       {/* URL Bar */}
       <URLBar

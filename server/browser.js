@@ -19,7 +19,12 @@ let isRunning = false;    // Guard against double-start
 let activeWs = null;      // The currently connected WebSocket client
 let frameCount = 0;       // For server-side FPS calculation
 
-// Current screencast settings (can be changed live by client)
+// FinOps & Monitoring State
+let inactivityTimer = null;
+let statsInterval = null;
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
+// Current screencast settings
 let screencastConfig = {
   format: 'jpeg',
   quality: 60,
@@ -29,10 +34,6 @@ let screencastConfig = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Send a typed JSON message to the active WebSocket client.
- * Silently drops if socket is not open.
- */
 function send(ws, payload) {
   if (ws && ws.readyState === 1) {
     try {
@@ -43,16 +44,10 @@ function send(ws, payload) {
   }
 }
 
-/**
- * Poll http://127.0.0.1:9222/json/version until Chromium's CDP endpoint
- * responds. Retries up to `retries` times with 500ms delay.
- */
 async function waitForChromium(retries = 120) {
   for (let i = 0; i < retries; i++) {
     try {
       console.log(`[CDP] Attempt ${i + 1}`);
-
-      // 🛑 BUGFIX: Added a 1-second timeout so fetch doesn't hang forever
       const res = await fetch('http://127.0.0.1:9222/json/version', {
         signal: AbortSignal.timeout(1000)
       });
@@ -62,24 +57,25 @@ async function waitForChromium(retries = 120) {
         console.log('[CDP] Connected');
         return data;
       }
-    } catch (err) {
-      // It's normal to fail here while Chromium boots. We just wait and loop.
-      // Uncomment the line below if you want to see the exact fetch error:
-      // console.log('[CDP] Not ready:', err.message);
-    }
-
+    } catch (err) {}
     await new Promise(r => setTimeout(r, 500));
   }
-
   throw new Error('Chromium did not become ready.');
+}
+
+// Resets the auto-destruct timer on every user interaction
+function resetInactivityTimer(ws) {
+  if (inactivityTimer) clearTimeout(inactivityTimer);
+  
+  inactivityTimer = setTimeout(async () => {
+    console.log('[System] User inactive for 5 minutes. Shutting down container to save resources.');
+    send(ws, { type: 'status', state: 'stopped', msg: 'Session paused due to inactivity.' });
+    await stopBrowser(ws);
+  }, IDLE_TIMEOUT_MS);
 }
 
 // ─── Screencast ───────────────────────────────────────────────────────────────
 
-/**
- * Start (or restart) the CDP screencast with current config.
- * Each frame arrives as base64-encoded JPEG and is forwarded to the client.
- */
 async function startScreencast(ws) {
   if (!cdpSession) return;
 
@@ -88,56 +84,47 @@ async function startScreencast(ws) {
   cdpSession.on('Page.screencastFrame', async (event) => {
     frameCount++;
 
-    // ACK every frame so Chromium knows we received it and sends the next one
     await cdpSession.send('Page.screencastFrameAck', {
       sessionId: event.sessionId,
     }).catch(() => {});
 
-    // Forward frame to client with timestamp for latency calculation
-    send(ws, {
-      type: 'frame',
-      data: event.data,          // base64 JPEG
-      ts: Date.now(),            // client uses this for latency display
-      metadata: event.metadata,  // { pageScaleFactor, offsetTop, deviceWidth, ... }
-    });
+    if (ws && ws.readyState === 1) {
+      try {
+        const jpegBuffer = Buffer.from(event.data, 'base64');
+        const tsBuffer = Buffer.alloc(8);
+        tsBuffer.writeDoubleBE(Date.now(), 0);
+        const binaryPacket = Buffer.concat([tsBuffer, jpegBuffer]);
+        ws.send(binaryPacket, { binary: true });
+      } catch (e) {
+        console.error('[Binary Stream] Error packing frame:', e.message);
+      }
+    }
   });
 
-  console.log('[Screencast] Started');
+  console.log('[Screencast] Started in Binary Mode');
 }
 
-/**
- * Stop the CDP screencast and remove the listener.
- */
 async function stopScreencast() {
   if (!cdpSession) return;
   try {
     await cdpSession.send('Page.stopScreencast');
     cdpSession.removeAllListeners('Page.screencastFrame');
-  } catch (e) {
-    // Session may already be closed
-  }
+  } catch (e) {}
   console.log('[Screencast] Stopped');
 }
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 
-/**
- * Start the Docker container, wait for Chromium to be ready,
- * connect Puppeteer via CDP, and begin streaming frames.
- */
 async function startBrowser(ws) {
   if (isRunning) {
     console.log('[Browser] Already running. Reattaching new client...');
-    activeWs = ws; // Update to the new WebSocket connection
+    activeWs = ws; 
     
-    // Stop the old stream and start a fresh one for the new page load
     await stopScreencast(); 
     await startScreencast(ws);
     
-    // Tell the fresh frontend that we are already live!
     send(ws, { type: 'status', state: 'live', msg: 'Reconnected to active browser.' });
     
-    // Send the current URL to the frontend so the URL bar updates
     if (page) {
       send(ws, { type: 'urlUpdate', url: page.url() });
     }
@@ -148,7 +135,6 @@ async function startBrowser(ws) {
   send(ws, { type: 'status', state: 'starting', msg: 'Spinning up Docker container...' });
 
   try {
-    // 1. Start the Docker container
     console.log('[Docker] Starting container...');
     await new Promise((resolve, reject) => {
       exec(
@@ -169,26 +155,100 @@ async function startBrowser(ws) {
       );
     });
 
-    // 2. Wait for Chromium's CDP endpoint to be reachable
+    // Start Live Docker Telemetry
+    statsInterval = setInterval(() => {
+      if (!isRunning) return clearInterval(statsInterval);
+      exec('docker stats bld-chromium --no-stream --format "{{.CPUPerc}}::{{.MemUsage}}"', (err, stdout) => {
+        if (!err && stdout && activeWs) {
+          const [cpu, mem] = stdout.trim().split('::');
+          send(activeWs, { type: 'server_stats', cpu, mem });
+        }
+      });
+    }, 2000);
+
     send(ws, { type: 'status', state: 'starting', msg: 'Waiting for Chromium to be ready...' });
     const { webSocketDebuggerUrl } = await waitForChromium();
 
-    // 3. Connect Puppeteer to Chromium via CDP WebSocket
     send(ws, { type: 'status', state: 'starting', msg: 'Connecting to Chromium...' });
     browser = await puppeteer.connect({
       browserWSEndpoint: webSocketDebuggerUrl,
-      defaultViewport: { width: 1280, height: 720 },
+      defaultViewport: { width: 1280, height: 720, deviceScaleFactor: 2 }, // Crisp Resolution!
     });
 
-    // 4. Get the default page (Chromium opens about:blank by default)
     const pages = await browser.pages();
     page = pages[0] || await browser.newPage();
-    await page.setViewport({ width: 1280, height: 720 });
+    await page.setViewport({ width: 1280, height: 720, deviceScaleFactor: 2 });
 
-    // 5. Create a raw CDP session for screencast
+    // 🚀 Force all "New Tab" links to open in the current tab
+    await page.evaluateOnNewDocument(() => {
+      document.addEventListener('click', (e) => {
+        const link = e.target.closest('a');
+        if (link && link.target === '_blank') {
+          link.target = '_self'; 
+        }
+      }, true);
+    });
+
+    // 🚀 Auto-sync the URL bar when the user clicks a native link
+    page.on('framenavigated', (frame) => {
+      if (frame === page.mainFrame() && activeWs) {
+        send(activeWs, { type: 'urlUpdate', url: frame.url() });
+      }
+    });
+
     cdpSession = await page.createCDPSession();
+   
+    // 🚀 NEW: Image-Based Start Screen (No fake URLs!)
+    const startScreenHTML = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body {
+            margin: 0;
+            padding: 0;
+            background-color: #0a0a0b;
+            /* Put a cool tech/abstract image URL here! */
+            background-image: url('https://images.unsplash.com/photo-1550751827-4bd374c3f58b?q=80&w=2070&auto=format&fit=crop');
+            background-size: cover;
+            background-position: center;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-family: monospace;
+          }
+          .overlay {
+            background: rgba(10, 10, 11, 0.85);
+            padding: 40px 60px;
+            border-radius: 16px;
+            border: 1px solid rgba(0, 229, 255, 0.2);
+            text-align: center;
+            backdrop-filter: blur(10px);
+          }
+          h1 { color: #ffffff; margin-bottom: 10px; font-size: 2rem; }
+          p { color: #00e5ff; font-size: 1.2rem; margin: 0; }
+        </style>
+      </head>
+      <body>
+        <div class="overlay">
+          <h1>BLD ENGINE ONLINE</h1>
+          <p>Awaiting Navigation...</p>
+        </div>
+      </body>
+      </html>
+    `;
+    
+    // Inject the image and CSS directly into the blank page
+    await page.setContent(startScreenHTML);
+    
+    // Send an EMPTY string back to React!
+    // This makes your UI's URL bar blank so the user can just click and type.
+    if (activeWs) {
+      send(activeWs, { type: 'urlUpdate', url: '' });
+    }
 
-    // 6. Handle browser crash / unexpected disconnect
     browser.on('disconnected', () => {
       console.log('[Browser] Disconnected unexpectedly');
       isRunning = false;
@@ -200,33 +260,21 @@ async function startBrowser(ws) {
       cleanup();
     });
 
-    // 7. Start streaming frames
     isRunning = true;
+    resetInactivityTimer(ws); // Start the AFK clock
     await startScreencast(ws);
 
-    send(ws, {
-      type: 'status',
-      state: 'live',
-      msg: 'Browser is live and streaming.',
-    });
-
+    send(ws, { type: 'status', state: 'live', msg: 'Browser is live and streaming.' });
     console.log('[Browser] Ready and streaming');
 
   } catch (err) {
     console.error('[Browser] Start failed:', err.message);
     isRunning = false;
     await cleanup();
-    send(ws, {
-      type: 'status',
-      state: 'error',
-      msg: `Failed to start: ${err.message}`,
-    });
+    send(ws, { type: 'status', state: 'error', msg: `Failed to start: ${err.message}` });
   }
 }
 
-/**
- * Cleanly stop the screencast, disconnect Puppeteer, and kill the Docker container.
- */
 async function stopBrowser(ws) {
   if (!isRunning) {
     send(ws, { type: 'status', state: 'stopped', msg: 'Browser was not running.' });
@@ -242,11 +290,10 @@ async function stopBrowser(ws) {
   console.log('[Browser] Stopped cleanly');
 }
 
-/**
- * Internal cleanup — stops screencast, closes Puppeteer, kills Docker container.
- * Safe to call multiple times.
- */
 async function cleanup() {
+  if (statsInterval) clearInterval(statsInterval);
+  if (inactivityTimer) clearTimeout(inactivityTimer);
+  
   try { await stopScreencast(); } catch {}
   try { if (browser) await browser.close(); } catch {}
   try {
@@ -273,16 +320,13 @@ const SPECIAL_KEYS = new Set([
 
 // ─── Message Router ───────────────────────────────────────────────────────────
 
-/**
- * Central handler for all incoming WebSocket messages from the client.
- */
-// ─── Updated Message Router ───────────────────────────────────────────────────
-
 async function handleMessage(ws, msg) {
-  // 🐛 DEBUG LOG: Prints every single command EXCEPT mousemove to keep terminal clean
   if (msg.type !== 'mousemove') {
     console.log(`[WS] Received command: ${msg.type}`, msg);
   }
+
+  // Any incoming message resets the AFK timer
+  if (isRunning) resetInactivityTimer(ws);
 
   if (msg.type === 'start') return await startBrowser(ws);
   if (msg.type === 'stop')  return await stopBrowser(ws);
@@ -304,6 +348,19 @@ async function handleMessage(ws, msg) {
         console.log(`[Nav] Navigating to: ${url}`);
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
         send(ws, { type: 'navigated', url: page.url() });
+        break;
+      }
+      
+      // Native Back and Forward logic
+      case 'go_back': {
+        await page.goBack({ waitUntil: 'domcontentloaded' }).catch(() => {});
+        send(ws, { type: 'urlUpdate', url: page.url() });
+        break;
+      }
+
+      case 'go_forward': {
+        await page.goForward({ waitUntil: 'domcontentloaded' }).catch(() => {});
+        send(ws, { type: 'urlUpdate', url: page.url() });
         break;
       }
 

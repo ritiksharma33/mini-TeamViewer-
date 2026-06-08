@@ -2,12 +2,12 @@
  * App.jsx
  *
  * Root component. Owns all application state and wires together:
- *   - WebSocket connection (via useWebSocket hook)
- *   - Browser state machine (idle → starting → live → stopping → stopped)
- *   - Frame rendering (passed to BrowserCanvas via ref)
- *   - Performance metrics (FPS, latency, frame count)
- *   - Action log
- *   - All UI panels
+ * - WebSocket connection (via useWebSocket hook)
+ * - Browser state machine (idle → starting → live → stopping → stopped)
+ * - Frame rendering (passed to BrowserCanvas via ref)
+ * - Performance metrics (FPS, latency, frame count)
+ * - Action log
+ * - All UI panels
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -51,6 +51,40 @@ export default function App() {
 
   useEffect(() => {
     if (!lastMessage) return;
+
+    // ⚡️ OPTIMIZATION: Route binary stream packets directly to the canvas pipeline
+    if (lastMessage instanceof Blob) {
+      const handleBinaryPayload = async () => {
+        try {
+          const arrayBuffer = await lastMessage.arrayBuffer();
+          const dataView = new DataView(arrayBuffer);
+          
+          // Read 8-byte Big-Endian double for server timestamp
+          const serverTimestamp = dataView.getFloat64(0, false); 
+          
+          // Extract raw image bytes following the timestamp data offset
+          const jpegBuffer = arrayBuffer.slice(8);
+          const imageBlob = new Blob([jpegBuffer], { type: 'image/jpeg' });
+          const objectUrl = URL.createObjectURL(imageBlob);
+
+          const canvas = canvasContainerRef.current?.querySelector('canvas');
+          if (canvas?.drawFrame) {
+            canvas.drawFrame(objectUrl);
+          }
+          recordFrame(serverTimestamp);
+
+          // Auto-revoke memory reference right after rendering loop completes
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 100);
+        } catch (err) {
+          console.error('[Binary Stream] Error parsing frame:', err);
+        }
+      };
+
+      handleBinaryPayload();
+      return; // Stop execution here so it doesn't drop down to standard JSON logic
+    }
+
+    // ── Handle Standard JSON Messages ───────────────────────────────────────
     const msg = lastMessage;
 
     switch (msg.type) {
@@ -69,10 +103,8 @@ export default function App() {
         if (msg.state === 'error')   addEntry('error', msg.msg || 'Unknown error');
         break;
 
-      // ── Incoming video frame ─────────────────────────────────────────────
+      // ── Incoming video frame (Legacy Fallback) ───────────────────────────
       case 'frame': {
-        // Draw the frame directly to the canvas without going through React state
-        // (state updates cause re-renders; we need 30+ fps without that overhead)
         const canvas = canvasContainerRef.current?.querySelector('canvas');
         if (canvas?.drawFrame) {
           canvas.drawFrame(msg.data);
@@ -145,6 +177,15 @@ export default function App() {
     addEntry('nav', `→ ${normalized}`);
     send({ type: 'navigate', url: normalized });
   }, [send, addEntry]);
+  const handleGoBack = useCallback(() => {
+    addEntry('nav', '← Going Back');
+    send({ type: 'go_back' });
+  }, [send, addEntry]);
+
+  const handleGoForward = useCallback(() => {
+    addEntry('nav', '→ Going Forward');
+    send({ type: 'go_forward' });
+  }, [send, addEntry]);
 
   const handleScreenshot = useCallback(() => {
     addEntry('screenshot', 'Screenshot requested...');
@@ -206,6 +247,7 @@ export default function App() {
       />
 
       {/* ── Toolbar ──────────────────────────────────────────────────────── */}
+    {/* ── Toolbar ──────────────────────────────────────────────────────── */}
       <ControlBar
         browserState={browserState}
         currentUrl={currentUrl}
@@ -214,11 +256,12 @@ export default function App() {
         onNavigate={handleNavigate}
         onScreenshot={handleScreenshot}
         onQualityChange={handleQualityChange}
+        onGoBack={handleGoBack}         // 👈 Newly added
+        onGoForward={handleGoForward}   // 👈 Newly added
         quality={quality}
         sidebarOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen(v => !v)}
       />
-
       {/* ── Main content area ─────────────────────────────────────────────── */}
       <div style={{
         flex: 1,

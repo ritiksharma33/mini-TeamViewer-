@@ -4,10 +4,10 @@
  * Custom React hook that manages a WebSocket connection to the backend.
  *
  * Features:
- *   - Auto-reconnect on disconnect (up to maxRetries attempts)
- *   - Exposes a type-safe send() function
- *   - Tracks connection status and the last received message
- *   - Counts reconnect attempts for UI display
+ * - Auto-reconnect on disconnect (up to maxRetries attempts)
+ * - Exposes a type-safe send() function
+ * - Tracks connection status and the last received message
+ * - Counts reconnect attempts for UI display
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
@@ -22,10 +22,10 @@ const RETRY_DELAY_MS = 2000;
 
 /**
  * @returns {{
- *   send: (msg: object) => void,
- *   lastMessage: object|null,
- *   status: WsStatus,
- *   retryCount: number,
+ * send: (msg: object) => void,
+ * lastMessage: object|Blob|null,
+ * status: WsStatus,
+ * retryCount: number,
  * }}
  */
 export function useWebSocket() {
@@ -57,6 +57,13 @@ export function useWebSocket() {
 
     ws.onmessage = (event) => {
       if (!isMounted.current) return;
+      
+      // ⚡️ FIX: If the message is raw binary data, skip JSON parsing entirely
+      if (event.data instanceof Blob) {
+        setLastMessage(event.data);
+        return;
+      }
+
       try {
         const msg = JSON.parse(event.data);
         setLastMessage(msg);
