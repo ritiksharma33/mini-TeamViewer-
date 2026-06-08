@@ -1,0 +1,19 @@
+{
+  "name": "remote-browser-server",
+  "version": "1.0.0",
+  "description": "Backend for remote browser control — BLD assignment",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.16.0",
+    "puppeteer-core": "^21.7.0",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.3"
+  }
+}

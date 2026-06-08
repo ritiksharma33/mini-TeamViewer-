@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  browser:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile
+    container_name: bld-chromium
+    ports:
+      - "9222:9222"
+    # Give Chromium more shared memory — prevents silent crashes
+    shm_size: '256mb'
+    # Auto-remove container on stop so re-start is always clean
+    restart: "no"
+    # Security: drop all capabilities, only add what's needed
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
