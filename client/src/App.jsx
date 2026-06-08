@@ -7,7 +7,7 @@
  * - Frame rendering (passed to BrowserCanvas via ref)
  * - Performance metrics (FPS, latency, frame count)
  * - Action log
- * - All UI panels
+ * - Multi-Tab UI and Session Management
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -30,19 +30,17 @@ export default function App() {
   const [statusMsg,    setStatusMsg]    = useState('');
   const [currentUrl,   setCurrentUrl]   = useState('');
 
-  // ── Quality ───────────────────────────────────────────────────────────────
+  // 🚀 Multi-Tab State
+  const [tabs, setTabs] = useState([]);
+  const [activeTabId, setActiveTabId] = useState(null);
+
+  // ── Quality & Metrics ─────────────────────────────────────────────────────
   const [quality, setQuality] = useState(60);
-
-  // ── Metrics ───────────────────────────────────────────────────────────────
   const { fps, latency, frameCount, recordFrame } = useBrowserMetrics();
-
-  // ── Action log ────────────────────────────────────────────────────────────
+  
+  // ── UI State ──────────────────────────────────────────────────────────────
   const { log, addEntry, clearLog } = useActionLog();
-
-  // ── Sidebar ───────────────────────────────────────────────────────────────
   const [sidebarOpen, setSidebarOpen] = useState(true);
-
-  // ── Canvas ref (to call drawFrame imperatively) ───────────────────────────
   const canvasContainerRef = useRef(null);
 
   const isLive = browserState === 'live';
@@ -89,42 +87,41 @@ export default function App() {
 
     switch (msg.type) {
 
-      // ── Connection welcome ───────────────────────────────────────────────
       case 'welcome':
         addEntry('system', 'Connected to server');
         break;
 
-      // ── Browser status updates ───────────────────────────────────────────
       case 'status':
         setBrowserState(msg.state);
         setStatusMsg(msg.msg || '');
         if (msg.state === 'live')    addEntry('system', 'Browser is live');
-        if (msg.state === 'stopped') addEntry('system', 'Browser stopped');
-        if (msg.state === 'error')   addEntry('error', msg.msg || 'Unknown error');
-        break;
-
-      // ── Incoming video frame (Legacy Fallback) ───────────────────────────
-      case 'frame': {
-        const canvas = canvasContainerRef.current?.querySelector('canvas');
-        if (canvas?.drawFrame) {
-          canvas.drawFrame(msg.data);
+        if (msg.state === 'stopped') {
+          addEntry('system', 'Browser stopped');
+          setTabs([]); // Clear tabs on shutdown
+          setActiveTabId(null);
         }
-        recordFrame(msg.ts);
+        if (msg.state === 'error') {
+          addEntry('error', msg.msg || 'Unknown error');
+          setTabs([]);
+          setActiveTabId(null);
+        }
         break;
-      }
 
-      // ── Navigation completed ─────────────────────────────────────────────
+      // 🚀 Handle Tab Updates from Server
+      case 'tabs_update':
+        setTabs(msg.tabs);
+        setActiveTabId(msg.activeTabId);
+        break;
+
       case 'navigated':
         setCurrentUrl(msg.url);
         addEntry('nav', `→ ${msg.url}`);
         break;
 
-      // ── URL update (e.g. from link clicks inside the browser) ───────────
       case 'urlUpdate':
         setCurrentUrl(msg.url);
         break;
 
-      // ── Screenshot ready ─────────────────────────────────────────────────
       case 'screenshot': {
         const a = document.createElement('a');
         a.href = 'data:image/png;base64,' + msg.data;
@@ -136,12 +133,10 @@ export default function App() {
         break;
       }
 
-      // ── Quality changed confirmed ────────────────────────────────────────
       case 'qualityChanged':
         addEntry('system', `Stream quality set to ${msg.value}%`);
         break;
 
-      // ── Server-side error ────────────────────────────────────────────────
       case 'error':
         addEntry('error', msg.msg || 'Unknown server error');
         break;
@@ -177,6 +172,7 @@ export default function App() {
     addEntry('nav', `→ ${normalized}`);
     send({ type: 'navigate', url: normalized });
   }, [send, addEntry]);
+
   const handleGoBack = useCallback(() => {
     addEntry('nav', '← Going Back');
     send({ type: 'go_back' });
@@ -185,6 +181,21 @@ export default function App() {
   const handleGoForward = useCallback(() => {
     addEntry('nav', '→ Going Forward');
     send({ type: 'go_forward' });
+  }, [send, addEntry]);
+
+  // 🚀 Tab Actions
+  const handleNewTab = useCallback(() => {
+    addEntry('system', 'Opening new tab');
+    send({ type: 'new_tab' });
+  }, [send, addEntry]);
+
+  const handleSwitchTab = useCallback((id) => {
+    send({ type: 'switch_tab', id });
+  }, [send]);
+
+  const handleCloseTab = useCallback((id) => {
+    addEntry('system', 'Closed tab');
+    send({ type: 'close_tab', id });
   }, [send, addEntry]);
 
   const handleScreenshot = useCallback(() => {
@@ -197,16 +208,10 @@ export default function App() {
     send({ type: 'setQuality', value: val });
   }, [send]);
 
-  // Log mouse clicks in the action log
-  const handleCanvasClick = useCallback((x, y) => {
-    addEntry('click', `Click at (${x}, ${y})`);
-  }, [addEntry]);
-
   // Wrap send to also log actions
   const wrappedSend = useCallback((msg) => {
     send(msg);
 
-    // Add certain events to the action log
     switch (msg.type) {
       case 'click':
         addEntry('click', `Click at (${msg.x}, ${msg.y})`);
@@ -247,7 +252,6 @@ export default function App() {
       />
 
       {/* ── Toolbar ──────────────────────────────────────────────────────── */}
-    {/* ── Toolbar ──────────────────────────────────────────────────────── */}
       <ControlBar
         browserState={browserState}
         currentUrl={currentUrl}
@@ -256,12 +260,87 @@ export default function App() {
         onNavigate={handleNavigate}
         onScreenshot={handleScreenshot}
         onQualityChange={handleQualityChange}
-        onGoBack={handleGoBack}         // 👈 Newly added
-        onGoForward={handleGoForward}   // 👈 Newly added
+        onGoBack={handleGoBack}
+        onGoForward={handleGoForward}
         quality={quality}
         sidebarOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen(v => !v)}
       />
+
+      {/* 🚀 The Tab Bar UI ───────────────────────────────────────────────── */}
+      {isLive && tabs.length > 0 && (
+        <div style={{ 
+          display: 'flex', 
+          background: 'var(--bg-surface)', 
+          borderBottom: '1px solid var(--border)', 
+          padding: '6px 12px 0', 
+          gap: '4px', 
+          overflowX: 'auto' 
+        }}>
+          {tabs.map((tabId, index) => (
+            <div 
+              key={tabId} 
+              onClick={() => handleSwitchTab(tabId)}
+              style={{
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '8px', 
+                padding: '6px 14px', 
+                cursor: 'pointer',
+                background: activeTabId === tabId ? 'var(--bg-base)' : 'var(--bg-elevated)',
+                color: activeTabId === tabId ? 'var(--accent)' : 'var(--text-secondary)',
+                borderTopLeftRadius: '6px', 
+                borderTopRightRadius: '6px', 
+                fontSize: '12px', 
+                fontFamily: 'var(--font-mono)',
+                border: activeTabId === tabId ? '1px solid var(--border)' : '1px solid transparent',
+                borderBottom: 'none'
+              }}
+            >
+              Tab {index + 1}
+              <button 
+                onClick={(e) => { 
+                  e.stopPropagation(); 
+                  handleCloseTab(tabId); 
+                }}
+                title="Close Tab"
+                style={{ 
+                  background: 'transparent', 
+                  border: 'none', 
+                  color: 'inherit', 
+                  cursor: 'pointer', 
+                  fontSize: '14px', 
+                  padding: '0 4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          <button 
+            onClick={handleNewTab}
+            title="New Tab"
+            style={{ 
+              background: 'transparent', 
+              border: '1px solid var(--border)', 
+              color: 'var(--text-primary)', 
+              borderRadius: '4px', 
+              margin: '2px 0 2px 4px', 
+              cursor: 'pointer', 
+              padding: '0 10px', 
+              height: '24px',
+              fontSize: '12px',
+              fontFamily: 'var(--font-mono)'
+            }}
+          >
+            +
+          </button>
+        </div>
+      )}
+
       {/* ── Main content area ─────────────────────────────────────────────── */}
       <div style={{
         flex: 1,
