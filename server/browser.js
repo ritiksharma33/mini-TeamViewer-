@@ -6,6 +6,8 @@
 const { exec, execSync } = require('child_process');
 const puppeteer = require('puppeteer-core');
 const crypto = require('crypto'); // Used to generate unique Tab IDs
+const fs = require('fs');         // Used to read the local image
+const path = require('path');     // Used to resolve the image path safely
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -22,19 +24,65 @@ const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
 let screencastConfig = { format: 'jpeg', quality: 60, maxWidth: 1280, maxHeight: 720 };
 
+// ─── Start Screen & Base64 Image Injection ────────────────────────────────────
+
+const imagePath = path.join(__dirname, 'Lose_Yourself.jpg');
+let backgroundImageData = '';
+
+try {
+  // Read the local image and convert it to a Base64 data string
+  const imageBuffer = fs.readFileSync(imagePath);
+  backgroundImageData = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
+} catch (err) {
+  console.error('[System] Could not load background image:', err.message);
+}
+
 // The custom sleek dashboard HTML
 const startScreenHTML = `
   <!DOCTYPE html>
   <html>
   <head>
     <style>
-      body { margin: 0; background-color: #0a0a0b; background-image: url('https://images.unsplash.com/photo-1550751827-4bd374c3f58b?q=80&w=2070&auto=format&fit=crop'); background-size: cover; background-position: center; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: monospace; }
-      .overlay { background: rgba(10, 10, 11, 0.85); padding: 40px 60px; border-radius: 16px; border: 1px solid rgba(0, 229, 255, 0.2); text-align: center; backdrop-filter: blur(10px); }
-      h1 { color: #ffffff; margin-bottom: 10px; font-size: 2rem; }
-      p { color: #00e5ff; font-size: 1.2rem; margin: 0; }
+      body { 
+        margin: 0; 
+        background-color: #0a0a0b; 
+        background-image: url('${backgroundImageData}'); 
+        background-size: cover; 
+        background-position: center; 
+        height: 80vh; 
+        overflow: hidden; /* 🚀 FIX 1: strictly prevents any scrollbars */
+        display: flex; 
+        flex-direction: column; 
+        align-items: center; 
+        justify-content: center; 
+        font-family: monospace; 
+      }
+      .overlay { 
+        background: rgba(10, 10, 11, 0.85); 
+        padding: 24px 40px; /* 🚀 FIX 2: smaller padding (was 40px 60px) */
+        border-radius: 12px; 
+        border: 1px solid rgba(0, 229, 255, 0.2); 
+        text-align: center; 
+        backdrop-filter: blur(10px); 
+      }
+      h1 { 
+        color: #ffffff; 
+        margin-bottom: 8px; 
+        font-size: 2.5rem; 
+      }
+      p { 
+        color: #00e5ff; 
+        font-size: 1.2rem; 
+        margin: 0; 
+      }
     </style>
   </head>
-  <body><div class="overlay"><h1>BLD ENGINE ONLINE</h1><p>Awaiting Navigation...</p></div></body>
+  <body>
+    <div class="overlay">
+      <h1>ENGINE ONLINE</h1>
+      <p>Awaiting Navigation...</p>
+    </div>
+  </body>
   </html>
 `;
 
@@ -60,6 +108,7 @@ async function waitForChromium(retries = 120) {
 function resetInactivityTimer(ws) {
   if (inactivityTimer) clearTimeout(inactivityTimer);
   inactivityTimer = setTimeout(async () => {
+    console.log('[System] Session paused due to inactivity. Cleaning up Docker.');
     send(ws, { type: 'status', state: 'stopped', msg: 'Session paused due to inactivity.' });
     await stopBrowser(ws);
   }, IDLE_TIMEOUT_MS);
@@ -138,11 +187,13 @@ async function startBrowser(ws) {
   send(ws, { type: 'status', state: 'starting', msg: 'Spinning up container...' });
 
   try {
+    console.log('\n[Docker] Allocating container resources...');
     await new Promise((resolve, reject) => {
       exec('docker run -d --rm --name bld-chromium -p 9222:9222 --shm-size=256mb bld-browser chromium --no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-gpu --headless --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --remote-allow-origins=* --window-size=1280,720 --user-data-dir=/tmp/chrome-data about:blank',
         (err, stdout, stderr) => err && !stderr.includes('already in use') ? reject(err) : resolve()
       );
     });
+    console.log('[Docker] Container running successfully.');
 
     statsInterval = setInterval(() => {
       if (!isRunning) return clearInterval(statsInterval);
@@ -151,6 +202,7 @@ async function startBrowser(ws) {
       });
     }, 2000);
 
+    console.log('[CDP] Establishing secure connection to Chromium...');
     const { webSocketDebuggerUrl } = await waitForChromium();
     browser = await puppeteer.connect({ browserWSEndpoint: webSocketDebuggerUrl, defaultViewport: null });
 
@@ -169,8 +221,10 @@ async function startBrowser(ws) {
     resetInactivityTimer(ws);
     await startScreencast(ws);
     send(ws, { type: 'status', state: 'live', msg: 'Browser is live.' });
+    console.log('[System] Multi-tab routing engine online and streaming.');
 
   } catch (err) {
+    console.error('[Error] Failed to initialize container:', err.message);
     isRunning = false;
     await cleanup();
     send(ws, { type: 'status', state: 'error', msg: `Failed to start: ${err.message}` });
@@ -180,6 +234,7 @@ async function startBrowser(ws) {
 async function stopBrowser(ws) {
   if (!isRunning) return;
   isRunning = false;
+  console.log('[System] Shutting down session...');
   await cleanup();
   send(ws, { type: 'status', state: 'stopped', msg: 'Browser stopped.' });
 }
@@ -189,7 +244,11 @@ async function cleanup() {
   if (inactivityTimer) clearTimeout(inactivityTimer);
   try { await stopScreencast(); } catch {}
   try { if (browser) await browser.close(); } catch {}
-  try { execSync('docker stop bld-chromium 2>/dev/null || true'); } catch {}
+  try { 
+    console.log('[Docker] Terminating container bld-chromium...');
+    execSync('docker stop bld-chromium 2>/dev/null || true'); 
+    console.log('[Docker] Container destroyed cleanly.');
+  } catch {}
   browser = null; tabs.clear(); activeTabId = null; frameCount = 0;
 }
 
@@ -198,6 +257,12 @@ async function cleanup() {
 const SPECIAL_KEYS = new Set(['Enter', 'Backspace', 'Tab', 'Escape', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Control', 'Alt', 'Shift', 'Meta']);
 
 async function handleMessage(ws, msg) {
+  // 🚀 THIS IS THE FIX: Completely ignore high-frequency spam in the terminal
+  const SPAM_EVENTS = ['mousemove', 'scroll', 'ping', 'server_stats', 'mousedown', 'mouseup'];
+  if (!SPAM_EVENTS.includes(msg.type)) {
+    console.log(`[Router] Executing command: ${msg.type.toUpperCase()}`);
+  }
+
   if (isRunning) resetInactivityTimer(ws);
   if (msg.type === 'start') return await startBrowser(ws);
   if (msg.type === 'stop')  return await stopBrowser(ws);
