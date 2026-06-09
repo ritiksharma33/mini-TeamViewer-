@@ -3,10 +3,10 @@
  * Express HTTP server + WebSocket server.
  *
  * Responsibilities:
- *   - Serve the built React frontend (client/dist) as static files
- *   - Handle WebSocket connections from the browser UI
- *   - Route all WebSocket messages to browser.js handlers
- *   - Expose /api/health endpoint for debugging
+ * - Serve the built React frontend (client/dist) as static files
+ * - Handle WebSocket connections from the browser UI
+ * - Route all WebSocket messages to browser.js handlers
+ * - Expose /api/health endpoint for debugging
  */
 
 const express = require('express');
@@ -51,6 +51,8 @@ const wss = new WebSocket.Server({ server });
 
 wss.on('connection', (ws, req) => {
   const clientIp = req.socket.remoteAddress;
+  
+  // 🚀 Restored this important infrastructure log!
   console.log(`[WS] Client connected from ${clientIp}`);
 
   // Send a welcome message so the client knows the server is healthy
@@ -70,10 +72,8 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
-    // Log all messages except the high-frequency ones
-    if (!['mousemove', 'frame'].includes(msg.type)) {
-      console.log(`[WS] ← ${msg.type}`, msg.type === 'navigate' ? msg.url : '');
-    }
+    // 🚀 We removed the duplicate logging here! 
+    // browser.js now handles all command logging via the Smart Logger to keep the terminal clean.
 
     await handleMessage(ws, msg);
   });
@@ -105,7 +105,7 @@ const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════╗
-║     Remote Browser Control — BLD Assignment   ║
+║     Remote Browser Control.                   ║
 ╠═══════════════════════════════════════════════╣
 ║  Server:    http://localhost:${PORT}              ║
 ║  Health:    http://localhost:${PORT}/api/health   ║

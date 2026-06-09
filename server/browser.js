@@ -253,16 +253,42 @@ async function cleanup() {
 }
 
 // ─── Message Router ───────────────────────────────────────────────────────────
+// ─── Message Router ───────────────────────────────────────────────────────────
 
 const SPECIAL_KEYS = new Set(['Enter', 'Backspace', 'Tab', 'Escape', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Control', 'Alt', 'Shift', 'Meta']);
 
+// 🚀 NEW: Smart Logger State Variables
+let lastLogType = null;
+let consecutiveLogCount = 0;
+const MAX_CONSECUTIVE_LOGS = 4;
+
 async function handleMessage(ws, msg) {
-  // 🚀 THIS IS THE FIX: Completely ignore high-frequency spam in the terminal
+  // 🚀 The Smart Logger Logic
   const SPAM_EVENTS = ['mousemove', 'scroll', 'ping', 'server_stats', 'mousedown', 'mouseup'];
-  if (!SPAM_EVENTS.includes(msg.type)) {
+  
+  if (SPAM_EVENTS.includes(msg.type)) {
+    if (lastLogType === msg.type) {
+      consecutiveLogCount++;
+      if (consecutiveLogCount <= MAX_CONSECUTIVE_LOGS) {
+        console.log(`[Router] Executing command: ${msg.type.toUpperCase()}`);
+      } else if (consecutiveLogCount === MAX_CONSECUTIVE_LOGS + 1) {
+        // Print a subtle indicator that the rest are being muted
+        console.log(`[Router] ... further ${msg.type.toUpperCase()} commands muted for clean terminal.`);
+      }
+    } else {
+      // It's a spam event, but a DIFFERENT one from the last. Reset and log.
+      lastLogType = msg.type;
+      consecutiveLogCount = 1;
+      console.log(`[Router] Executing command: ${msg.type.toUpperCase()}`);
+    }
+  } else {
+    // It's a high-value event (like NAVIGATE or START). Log it and reset the spam counter!
+    lastLogType = msg.type;
+    consecutiveLogCount = 1;
     console.log(`[Router] Executing command: ${msg.type.toUpperCase()}`);
   }
 
+  // ... [The rest of your handleMessage function stays EXACTLY the same below this]
   if (isRunning) resetInactivityTimer(ws);
   if (msg.type === 'start') return await startBrowser(ws);
   if (msg.type === 'stop')  return await stopBrowser(ws);
@@ -270,6 +296,7 @@ async function handleMessage(ws, msg) {
   const active = tabs.get(activeTabId);
   const page = active ? active.page : null;
   if (!page && !['new_tab'].includes(msg.type)) return;
+
 
   try {
     switch (msg.type) {
