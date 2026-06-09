@@ -40,6 +40,45 @@ A containerized remote browser system that allows users to launch, view, and con
 ```
 
 ---
+# 📁 Project Structure
+
+```text
+remote-browser-control/
+├── docker/
+│   └── Dockerfile
+│
+├── server/
+│   ├── index.js
+│   ├── browser.js
+│   └── package.json
+│
+├── client/
+│   ├── index.html
+│   ├── vite.config.js
+│   │
+│   └── src/
+│       ├── App.jsx
+│       ├── main.jsx
+│       ├── index.css
+│       │
+│       ├── hooks/
+│       │   ├── useWebSocket.js
+│       │   ├── useBrowserMetrics.js
+│       │   └── useActionLog.js
+│       │
+│       └── components/
+│           ├── BrowserCanvas.jsx
+│           ├── ControlBar.jsx
+│           ├── StatusBar.jsx
+│           └── ActionLog.jsx
+│
+├── docker-compose.yml
+└── README.md
+```
+
+---
+
+
 
 ## Advanced Features
 
@@ -47,14 +86,7 @@ A containerized remote browser system that allows users to launch, view, and con
 
 The system supports browser tab management through CDP target tracking.
 
-Features include:
-
-* Create tabs
-* Switch tabs
-* Close tabs
-* Active tab highlighting
-* Intercept `target="_blank"` links
-* Automatic tab registration
+Features include: Create tabs, Switch tabs, Close tabs, Active tab highlighting, Intercept `target="_blank"` links, Automatic tab registration
 
 Each tab is mapped internally to its own CDP session and browser page.
 
@@ -65,12 +97,7 @@ Each tab is mapped internally to its own CDP session and browser page.
 The initial implementation streamed Base64 JPEG frames inside JSON payloads.
 
 This was later optimized using a binary protocol:
-
-* JPEG frame bytes are sent directly
-* Server timestamps are packed into binary buffers
-* No Base64 overhead
-* Reduced payload size
-* Faster frame decoding on the client
+* No Base64 overhead, Reduced payload size, Faster frame decoding on the client
 
 This significantly improves streaming efficiency compared to JSON-based frame transport.
 
@@ -93,12 +120,7 @@ This prevents users from becoming locked out of active browser instances.
 
 ### Live Browser Metrics
 
-The dashboard displays:
-
-* FPS
-* Frame latency
-* Browser URL
-* Connection status
+The dashboard displays: FPS, Frame latency, Browser URL, Connection status
 
 allowing users to monitor stream performance in real time.
 
@@ -106,10 +128,7 @@ allowing users to monitor stream performance in real time.
 
 ### Docker Telemetry
 
-The backend continuously polls Docker statistics and streams:
-
-* CPU usage
-* Memory usage
+The backend continuously polls Docker statistics and streams: CPU usage, Memory usage
 
 directly to the React dashboard.
 
@@ -121,29 +140,17 @@ This provides visibility into browser resource consumption.
 
 To prevent wasted compute resources, idle browser sessions are automatically terminated after prolonged inactivity.
 
-Benefits:
-
-* Reduced resource usage
-* Better cloud cost efficiency
-* Automatic cleanup
+Benefits: Reduced resource usage, Better cloud cost efficiency, Automatic cleanup
 
 ---
 
 ### Smart Logging System
 
-High-frequency events such as:
-
-* Mouse movement
-* Scroll events
+High-frequency events such as: Mouse movement, Scroll events
 
 can flood terminal logs.
 
-A custom logging wrapper suppresses repetitive event spam while preserving meaningful actions like:
-
-* Clicks
-* Navigations
-* Tab operations
-* Session lifecycle events
+A custom logging wrapper suppresses repetitive event spam while preserving meaningful actions like: Clicks, Navigations, Tab operations, Session lifecycle events
 
 This keeps infrastructure logs readable.
 
@@ -172,8 +179,7 @@ This keeps infrastructure logs readable.
 
 ## Infrastructure
 
-* Docker
-* Chromium
+* Docker, Chromium
 
 ---
 
