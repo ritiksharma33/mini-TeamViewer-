@@ -11,6 +11,10 @@ A containerized remote browser system that allows users to launch, view, and con
 * Full keyboard support - Text input, Special keys, Shortcuts, Navigation keys
 * URL navigation bar
 
+
+https://github.com/user-attachments/assets/6b490143-2da2-402b-950e-cd2581b31606
+
+
 # 🏗 Architecture
 
 ```text
