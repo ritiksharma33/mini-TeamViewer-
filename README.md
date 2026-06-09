@@ -1,35 +1,45 @@
 # 🌐 BLD Remote Browser Engine
 
 A containerized remote browser system that allows users to launch, view, and control an isolated Chromium instance running inside Docker directly from a web browser.
-
-The project was built to explores browser virtualization, container orchestration, real-time streaming, Chrome DevTools Protocol (CDP), WebSockets, and frontend-backend synchronization.
-
-Unlike traditional VNC-based approaches, this system communicates directly with Chromium through the Chrome DevTools Protocol, enabling lower overhead, direct input dispatch, browser telemetry, and fine-grained control over browser behavior.
-
----
-
 # ✨ Features
 
 ## Core Browser Features
 
 * Launch isolated Chromium instances inside Docker
 * Real-time browser screen streaming
-* Full mouse interaction support
-
-  * Click
-  * Right Click
-  * Hover
-  * Scroll
-  * Drag
-* Full keyboard support
-
-  * Text input
-  * Special keys
-  * Shortcuts
-  * Navigation keys
+* Full mouse interaction support - Click, Right Click, Hover, Scroll, Drag
+* Full keyboard support - Text input, Special keys, Shortcuts, Navigation keys
 * URL navigation bar
-* Screenshot capture
-* Browser status monitoring
+
+# 🏗 Architecture
+
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│                         Your Machine                            │
+│                                                                 │
+│  ┌──────────────┐   WebSocket    ┌──────────────────────────┐   │
+│  │   React UI   │ ←───────────→  │     Node.js Server       │   │
+│  │              │  Frames/Input  │    Express + ws          │   │
+│  │              │                │                          │   │
+│  │  Canvas      │                │  Puppeteer-Core          │   │
+│  │  URL Bar     │                │  CDP Sessions            │   │
+│  │  Metrics     │                │  Docker Lifecycle        │   │
+│  │  Tabs        │                │  Binary Streaming        │   │
+│  └──────────────┘                └──────────┬───────────────┘   │
+│                                             │                   │
+│                                             │ CDP               │
+│                                             │                   │
+│                                  ┌──────────▼───────────────┐   │
+│                                  │     Docker Container     │   │
+│                                  │                          │   │
+│                                  │ Headless Chromium        │   │
+│                                  │ Remote Debugging         │   │
+│                                  │ Port 9222               │   │
+│                                  └──────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
 
 ## Advanced Features
 
@@ -139,35 +149,7 @@ This keeps infrastructure logs readable.
 
 ---
 
-# 🏗 Architecture
 
-```text
-┌─────────────────────────────────────────────────────────────────┐
-│                         Your Machine                            │
-│                                                                 │
-│  ┌──────────────┐   WebSocket    ┌──────────────────────────┐   │
-│  │   React UI   │ ←───────────→  │     Node.js Server       │   │
-│  │              │  Frames/Input  │    Express + ws          │   │
-│  │              │                │                          │   │
-│  │  Canvas      │                │  Puppeteer-Core          │   │
-│  │  URL Bar     │                │  CDP Sessions            │   │
-│  │  Metrics     │                │  Docker Lifecycle        │   │
-│  │  Tabs        │                │  Binary Streaming        │   │
-│  └──────────────┘                └──────────┬───────────────┘   │
-│                                             │                   │
-│                                             │ CDP               │
-│                                             │                   │
-│                                  ┌──────────▼───────────────┐   │
-│                                  │     Docker Container     │   │
-│                                  │                          │   │
-│                                  │ Headless Chromium        │   │
-│                                  │ Remote Debugging         │   │
-│                                  │ Port 9222               │   │
-│                                  └──────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
 
 # 🛠 Technology Stack
 
